@@ -27,6 +27,7 @@ GIT_DIRTY?=$(shell test -n "`git status --porcelain`" && echo "+CHANGES" || true
 GIT_DESCRIBE?=$(shell git describe --tags --always)
 GIT_IMPORT=github.com/hashicorp/consul/version
 GOLDFLAGS=-X $(GIT_IMPORT).GitCommit=$(GIT_COMMIT)$(GIT_DIRTY) -X $(GIT_IMPORT).GitDescribe=$(GIT_DESCRIBE)
+CONSUL_TEST_OUTPUT?=$(CURDIR)/test.log
 
 ifeq ($(FORCE_REBUILD),1)
 NOCACHE=--no-cache
@@ -96,6 +97,7 @@ export GIT_DIRTY
 export GIT_DESCRIBE
 export GOTAGS
 export GOLDFLAGS
+export CONSUL_TEST_OUTPUT
 
 
 DEV_PUSH?=0
@@ -158,24 +160,13 @@ test: other-consul dev-build vet
 	@# hide it from travis as it exceeds their log limits and causes job to be
 	@# terminated (over 4MB and over 10k lines in the UI). We need to output
 	@# _something_ to stop them terminating us due to inactivity...
-	{ go test $(GOTEST_FLAGS) -tags '$(GOTAGS)' -timeout 7m $(GOTEST_PKGS) 2>&1 ; echo $$? > exit-code ; } | tee test.log | egrep '^(ok|FAIL)\s*github.com/hashicorp/consul'
+	{ go test $(GOTEST_FLAGS) -tags '$(GOTAGS)' -timeout 7m $(GOTEST_PKGS); echo $$? > exit-code ; }
 	@echo "Exit code: $$(cat exit-code)" >> test.log
 	@if [ "0" != "$$(cat exit-code)" ]; then \
 	  echo Retrying to avoid flacky tests >> test.log;\
 	  echo Retrying tests once...;\
-	  go test -p 5 -parallel 1 -tags '$(GOTAGS)' -timeout 5m $(GOTEST_PKGS) 2>&1; echo $$? > exit-code;\
+	  go test -p 5 -parallel 1 -tags '$(GOTAGS)' -timeout 5m $(GOTEST_PKGS); echo $$? > exit-code;\
 	fi
-	@# This prints all the race report between ====== lines
-	@awk '/^WARNING: DATA RACE/ {do_print=1; print "=================="} do_print==1 {print} /^={10,}/ {do_print=0}' test.log || true
-	@grep -A10 'panic: ' test.log || true
-	@# Prints all the failure output until the next non-indented line - testify
-	@# helpers often output multiple lines for readability but useless if we can't
-	@# see them. Un-intuitive order of matches is necessary. No || true because
-	@# awk always returns true even if there is no match and it breaks non-bash
-	@# shells locally.
-	@awk '/^[^[:space:]]/ {do_print=0} /--- SKIP/ {do_print=1} do_print==1 {print}' test.log
-	@awk '/^[^[:space:]]/ {do_print=0} /--- FAIL/ {do_print=1} do_print==1 {print}' test.log
-	@grep '^FAIL' test.log || true
 	@if [ "$$(cat exit-code)" == "0" ] ; then echo "PASS" ; exit 0 ; else exit 1 ; fi
 
 test-race:

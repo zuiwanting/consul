@@ -150,6 +150,15 @@ func (a *TestAgent) Start() *TestAgent {
 		}
 
 		logOutput := a.LogOutput
+		// Allow specifying a file to send logs to via the env
+		if logOutput == nil {
+			if logPath := os.Getenv("CONSUL_TEST_OUTPUT"); logPath != "" {
+				fp, err := os.Create(logPath)
+				if err == nil {
+					logOutput = fp
+				}
+			}
+		}
 		if logOutput == nil {
 			logOutput = os.Stderr
 		}
