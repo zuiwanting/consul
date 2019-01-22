@@ -73,7 +73,10 @@ func (s *Server) monitorLeadership() {
 				leaderLoop.Add(1)
 				go func(ch chan struct{}) {
 					defer leaderLoop.Done()
-					s.leaderLoop(ch)
+					err := s.leaderLoop(ch)
+					if err != nil {
+						s.stepDown()
+					}
 				}(weAreLeaderCh)
 				s.logger.Printf("[INFO] consul: cluster leadership acquired")
 
@@ -122,9 +125,28 @@ func (s *Server) monitorLeadership() {
 	}
 }
 
+func (s *Server) stepDown() {
+	confFuture := s.raft.GetConfiguration()
+	if err := confFuture.Error(); err != nil {
+		s.logger.Printf("[WARN] consul: failed to obtain raft configuration: %v", err)
+		return
+	}
+	address := raft.ServerAddress(s.config.RPCAddr.String())
+	for _, server := range confFuture.Configuration().Servers {
+		if address == server.Address {
+			demoteFuture := s.raft.DemoteVoter(server.ID, 0, 0)
+			if err := demoteFuture.Error(); err != nil {
+				s.logger.Printf("[WARN] consul: failed to demote its own vote in an attempt to step down: %v", err)
+				return
+			}
+			break
+		}
+	}
+}
+
 // leaderLoop runs as long as we are the leader to run various
 // maintenance activities
-func (s *Server) leaderLoop(stopCh chan struct{}) {
+func (s *Server) leaderLoop(stopCh chan struct{}) error {
 	// Fire a user event indicating a new leader
 	payload := []byte(s.config.NodeName)
 	for name, segment := range s.LANSegments() {
@@ -174,7 +196,7 @@ RECONCILE:
 			if err := s.revokeLeadership(); err != nil {
 				s.logger.Printf("[ERR] consul: failed to revoke leadership: %v", err)
 			}
-			goto WAIT
+			return err
 		}
 		establishedLeader = true
 		defer func() {
@@ -200,7 +222,7 @@ WAIT:
 	// down.
 	select {
 	case <-stopCh:
-		return
+		return nil
 	default:
 	}
 
@@ -209,9 +231,9 @@ WAIT:
 	for {
 		select {
 		case <-stopCh:
-			return
+			return nil
 		case <-s.shutdownCh:
-			return
+			return nil
 		case <-interval:
 			goto RECONCILE
 		case member := <-reconcileCh:
@@ -219,7 +241,9 @@ WAIT:
 		case index := <-s.tombstoneGC.ExpireCh():
 			go s.reapTombstones(index)
 		case errCh := <-s.reassertLeaderCh:
-			errCh <- reassert()
+			err := reassert()
+			errCh <- err
+			return err
 		}
 	}
 }
