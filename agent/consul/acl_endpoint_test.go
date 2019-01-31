@@ -1152,7 +1152,7 @@ func TestACLEndpoint_PolicyRead(t *testing.T) {
 
 func TestACLEndpoint_PolicyBatchRead(t *testing.T) {
 	t.Parallel()
-	assert := assert.New(t)
+	require := require.New(t)
 
 	dir1, s1 := testServerWithConfig(t, func(c *Config) {
 		c.ACLDatacenter = "dc1"
@@ -1166,32 +1166,32 @@ func TestACLEndpoint_PolicyBatchRead(t *testing.T) {
 
 	testrpc.WaitForLeader(t, s1.RPC, "dc1")
 
-	t1, err := upsertTestToken(codec, "root", "dc1")
-	assert.NoError(err)
+	p1, err := upsertTestPolicy(codec, "root", "dc1")
+	require.NoError(err)
 
-	t2, err := upsertTestToken(codec, "root", "dc1")
-	assert.NoError(err)
+	p2, err := upsertTestPolicy(codec, "root", "dc1")
+	require.NoError(err)
 
 	acl := ACL{srv: s1}
-	tokens := []string{t1.AccessorID, t2.AccessorID}
+	policies := []string{p1.ID, p2.ID}
 
-	req := structs.ACLTokenBatchGetRequest{
+	req := structs.ACLPolicyBatchGetRequest{
 		Datacenter:   "dc1",
-		AccessorIDs:  tokens,
+		PolicyIDs:    policies,
 		QueryOptions: structs.QueryOptions{Token: "root"},
 	}
 
-	resp := structs.ACLTokenBatchResponse{}
+	resp := structs.ACLPolicyBatchResponse{}
 
-	err = acl.TokenBatchRead(&req, &resp)
-	assert.NoError(err)
+	err = acl.PolicyBatchRead(&req, &resp)
+	require.NoError(err)
 
-	var retrievedTokens []string
+	var retrievedPolicies []string
 
-	for _, v := range resp.Tokens {
-		retrievedTokens = append(retrievedTokens, v.AccessorID)
+	for _, v := range resp.Policies {
+		retrievedPolicies = append(retrievedPolicies, v.ID)
 	}
-	assert.EqualValues(retrievedTokens, tokens)
+	require.EqualValues(retrievedPolicies, policies)
 }
 
 func TestACLEndpoint_PolicySet(t *testing.T) {
