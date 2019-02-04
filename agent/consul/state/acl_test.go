@@ -317,9 +317,13 @@ func TestStateStore_ACLToken_SetGet(t *testing.T) {
 		}
 
 		require.NoError(t, s.ACLTokenSet(2, token, false))
+		// should be updated inline with the policy name
+		require.Equal(t, "node-read", token.Policies[0].Name)
 
 		idx, rtoken, err := s.ACLTokenGetByAccessor(nil, "daf37c07-d04d-4fd5-9678-a8206a57d61a")
 		require.NoError(t, err)
+		// pointers should be equal - no new allocs
+		require.True(t, rtoken == token)
 		require.Equal(t, uint64(2), idx)
 		// pointer equality
 		require.True(t, rtoken == token)
@@ -366,6 +370,45 @@ func TestStateStore_ACLToken_SetGet(t *testing.T) {
 		require.Len(t, rtoken.Policies, 1)
 		require.Equal(t, structs.ACLPolicyGlobalManagementID, rtoken.Policies[0].ID)
 		require.Equal(t, "global-management", rtoken.Policies[0].Name)
+	})
+
+	t.Run("Policy Link Updated Name", func(t *testing.T) {
+		t.Parallel()
+		s := testACLTokensStateStore(t)
+		token := &structs.ACLToken{
+			AccessorID: "daf37c07-d04d-4fd5-9678-a8206a57d61a",
+			SecretID:   "39171632-6f34-4411-827f-9416403687f4",
+			Policies: []structs.ACLTokenPolicyLink{
+				structs.ACLTokenPolicyLink{
+					ID: "a0625e95-9b3e-42de-a8d6-ceef5b6f3286",
+				},
+			},
+		}
+
+		require.NoError(t, s.ACLTokenSet(2, token, false))
+		// should be updated inline with the policy name
+		require.Equal(t, "node-read", token.Policies[0].Name)
+
+		_, rtoken, err := s.ACLTokenGetByAccessor(nil, "daf37c07-d04d-4fd5-9678-a8206a57d61a")
+		require.NoError(t, err)
+		require.True(t, token == rtoken)
+		require.Equal(t, "node-read", token.Policies[0].Name)
+
+		updatedPolicy := &structs.ACLPolicy{
+			ID:          "a0625e95-9b3e-42de-a8d6-ceef5b6f3286",
+			Name:        "node-read-updated",
+			Description: "Allows reading all node information",
+			Rules:       `node_prefix "" { policy = "read" }`,
+			Syntax:      acl.SyntaxCurrent,
+		}
+
+		require.NoError(t, s.ACLPolicySet(3, updatedPolicy))
+
+		_, rtoken, err = s.ACLTokenGetByAccessor(nil, "daf37c07-d04d-4fd5-9678-a8206a57d61a")
+		require.NoError(t, err)
+		require.Equal(t, "node-read", token.Policies[0].Name)
+		require.False(t, token == rtoken)
+		require.Equal(t, "node-read-updated", rtoken.Policies[0].Name)
 	})
 }
 

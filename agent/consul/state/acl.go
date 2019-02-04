@@ -244,26 +244,64 @@ func (s *Store) CanBootstrapACLToken() (bool, uint64, error) {
 	return false, out.(*IndexEntry).Value, nil
 }
 
-func (s *Store) resolveTokenPolicyLinks(tx *memdb.Txn, token *structs.ACLToken, allowMissing bool) error {
+func (s *Store) resolveTokenPolicyLinks(tx *memdb.Txn, token *structs.ACLToken, allowMissing bool, owned bool) (*structs.ACLToken, error) {
+	var newLinks []structs.ACLTokenPolicyLink
 	for linkIndex, link := range token.Policies {
 		if link.ID != "" {
 			policy, err := s.getPolicyWithTxn(tx, nil, link.ID, "id")
 
 			if err != nil {
-				return err
+				return token, err
 			}
 
 			if policy != nil {
-				// the name doesn't matter here
-				token.Policies[linkIndex].Name = policy.Name
+				if link.Name != policy.Name {
+					if owned {
+						token.Policies[linkIndex].Name = policy.Name
+					} else {
+						// policy was renamed - since linking
+						if newLinks == nil {
+							// initialize newLinks with all the previous unmodified links
+							newLinks = append(newLinks, token.Policies[:linkIndex]...)
+						}
+
+						newLinks = append(newLinks, structs.ACLTokenPolicyLink{ID: policy.ID, Name: policy.Name})
+					}
+				} else if newLinks != nil {
+					// always append if we have modified links
+					newLinks = append(newLinks, link)
+				}
 			} else if !allowMissing {
-				return fmt.Errorf("No such policy with ID: %s", link.ID)
+				return nil, fmt.Errorf("No suchy policy with ID: %s", link.ID)
+			} else {
+				// policy is missing but allowing it anyways
+				if newLinks != nil {
+					// append to newLinks if we are maintaining a modified link set
+					newLinks = append(newLinks, link)
+				}
 			}
 		} else {
-			return fmt.Errorf("Encountered a Token with policies linked by Name in the state store")
+			return nil, fmt.Errorf("Encountered a Token with policies linked by Name in the state store")
 		}
 	}
-	return nil
+
+	if newLinks != nil {
+		newToken := &structs.ACLToken{
+			AccessorID:  token.AccessorID,
+			SecretID:    token.SecretID,
+			Description: token.Description,
+			Type:        token.Type,
+			Rules:       token.Rules,
+			Local:       token.Local,
+			CreateTime:  token.CreateTime,
+			RaftIndex:   token.RaftIndex,
+			Policies:    newLinks,
+		}
+
+		newToken.SetHash(true)
+		return newToken, nil
+	}
+	return token, nil
 }
 
 // ACLTokenSet is used to insert an ACL rule into the state store.
@@ -363,7 +401,8 @@ func (s *Store) aclTokenSetTxn(tx *memdb.Txn, idx uint64, token *structs.ACLToke
 		token.AccessorID = original.AccessorID
 	}
 
-	if err := s.resolveTokenPolicyLinks(tx, token, allowMissingPolicyIDs); err != nil {
+	token, err = s.resolveTokenPolicyLinks(tx, token, allowMissingPolicyIDs, true)
+	if err != nil {
 		return err
 	}
 
@@ -447,7 +486,8 @@ func (s *Store) aclTokenGetTxn(tx *memdb.Txn, ws memdb.WatchSet, value, index st
 
 	if rawToken != nil {
 		token := rawToken.(*structs.ACLToken)
-		if err := s.resolveTokenPolicyLinks(tx, token, true); err != nil {
+		token, err = s.resolveTokenPolicyLinks(tx, token, true, false)
+		if err != nil {
 			return nil, err
 		}
 		return token, nil
@@ -502,7 +542,8 @@ func (s *Store) ACLTokenList(ws memdb.WatchSet, local, global bool, policy strin
 	var result structs.ACLTokens
 	for raw := iter.Next(); raw != nil; raw = iter.Next() {
 		token := raw.(*structs.ACLToken)
-		if err := s.resolveTokenPolicyLinks(tx, token, true); err != nil {
+		token, err = s.resolveTokenPolicyLinks(tx, token, true, false)
+		if err != nil {
 			return 0, nil, err
 		}
 		result = append(result, token)
