@@ -1,5 +1,19 @@
 @import '../layouts/index';
 
+// TODO: Move to base
+%user-drag-none {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+// TODO: Decide whether to move to base
+* {
+  @extend %user-drag-none;
+}
+a {
+  @extend %user-select-text;
+}
+
 // TODO: This shouldn't be done here, decide the best way to do this
 // %main-decoration ? %main-skin ? %content-skin ?
 // it includes layouts of components, but not layout of itself?
